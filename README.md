@@ -186,7 +186,7 @@ python dashboard.py
 python telegram_bot.py
 ```
 
-For cloud automation (GitHub Actions), add the same `.env` keys as repo Secrets, then push to your fork — workflows in `.github/workflows/` activate automatically.
+For cloud automation (GitHub Actions), add the same `.env` keys as repo Secrets in your fork's settings, then **copy `github-workflows-templates/*.yml` into `.github/workflows/`** in your fork — they'll activate automatically. (They live in a templates folder here so the showcase can be pushed without needing `workflow` scope on the PAT.)
 
 ---
 
