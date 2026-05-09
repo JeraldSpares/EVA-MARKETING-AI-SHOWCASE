@@ -1,0 +1,91 @@
+name: Demo Drip Email Blast (Telegram-triggered)
+# Sends personalized drip emails to ALL active leads in leads.csv — DEMO ONLY.
+# Does NOT commit leads.csv back, so sequence counters stay unchanged.
+# Safe to run anytime — daily automation is not affected.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  drip-email:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      GMAIL_ADDRESS:            ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASS:           ${{ secrets.GMAIL_APP_PASS }}
+      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:   ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      AUTO_SEND: "true"
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send demo drip emails to all active leads (no sequence update)
+        run: python send_drip_email.py
+
+      - name: Notify Telegram + Dashboard — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_PAT:         ${{ secrets.GITHUB_PAT }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "📨 Drip email blast dispatched successfully."},
+                  timeout=10
+              )
+          pat = os.environ.get("GITHUB_PAT", "")
+          if pat:
+              requests.post(
+                  "https://enderun-eva.up.railway.app/api/webhook/notify",
+                  headers={"X-Notify-Token": pat},
+                  json={"agent_id": "drip-campaign", "level": "success",
+                        "title": "Drip Emails Sent ✅",
+                        "message": "Personalized drip emails sent to all active leads."},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram + Dashboard — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_PAT:         ${{ secrets.GITHUB_PAT }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Drip email blast failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          pat = os.environ.get("GITHUB_PAT", "")
+          if pat:
+              requests.post(
+                  "https://enderun-eva.up.railway.app/api/webhook/notify",
+                  headers={"X-Notify-Token": pat},
+                  json={"agent_id": "drip-campaign", "level": "critical",
+                        "title": "Drip Emails Failed ❌",
+                        "message": "Drip email blast failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF

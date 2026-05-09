@@ -1,0 +1,64 @@
+name: Weekly Analytics Report (Monday 8:00 AM PHT)
+
+on:
+  schedule:
+    - cron: '0 0 * * 1'   # Monday 12:00 AM UTC = Monday 8:00 AM PHT
+  workflow_dispatch:
+
+jobs:
+  weekly-analytics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Weekly Analytics Report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS:     ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASS:    ${{ secrets.GMAIL_APP_PASS }}
+        run: python weekly_analytics_report.py
+
+      - name: Notify Telegram — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "📊 Analytics Report done — check your email for the PDF."},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Analytics Report failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF

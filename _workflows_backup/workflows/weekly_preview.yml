@@ -1,0 +1,72 @@
+name: Weekly Campaign Preview (Sunday 5:00 PM PHT)
+
+on:
+  schedule:
+    - cron: '0 9 * * 0'   # Sunday 9:00 AM UTC = Sunday 5:00 PM PHT
+  workflow_dispatch:
+
+jobs:
+  weekly-preview:
+    runs-on: ubuntu-latest
+    env:
+      GMAIL_ADDRESS:     ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASS:    ${{ secrets.GMAIL_APP_PASS }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Weekly Campaign Preview
+        run: python weekly_campaign_preview.py
+
+      - name: Commit preview state
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add preview_state.json
+          git diff --staged --quiet || git commit -m "Save preview state after Sunday send [skip ci]"
+          git push || true
+
+      - name: Notify Telegram — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "📅 Weekly Campaign Preview done — check your email for the PDF schedule."},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Weekly Preview failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF

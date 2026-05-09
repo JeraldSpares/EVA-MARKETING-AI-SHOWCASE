@@ -1,0 +1,90 @@
+// ============================================================
+// Eva Trading Bot — TradingView Alert Script
+// Sends webhook to Railway bot when signals fire
+// ============================================================
+// HOW TO USE:
+// 1. Open TradingView → open any chart (e.g. BTCUSDT on Binance)
+// 2. Click "Pine Script Editor" tab at bottom
+// 3. Paste this entire script → click "Add to chart"
+// 4. Click the "..." on the indicator → "Add alert"
+// 5. In alert settings:
+//    - Condition: Eva Alert Script → "Buy Signal" or "Sell Signal"
+//    - Webhook URL: https://YOUR-RAILWAY-URL/tv-alert?secret=enderun-tv-secret
+//    - Message: leave as default (script sends JSON)
+// ============================================================
+
+//@version=5
+indicator("Eva Trading Alerts", overlay=true, shorttitle="EVA")
+
+// ── INPUTS ──────────────────────────────────────────────────
+ema_fast   = input.int(20,  "Fast EMA",  minval=1)
+ema_slow   = input.int(50,  "Slow EMA",  minval=1)
+rsi_len    = input.int(14,  "RSI Length",minval=1)
+rsi_ob     = input.int(70,  "RSI Overbought", minval=50, maxval=100)
+rsi_os     = input.int(30,  "RSI Oversold",   minval=1,  maxval=50)
+show_emas  = input.bool(true, "Show EMAs")
+
+// ── CALCULATIONS ─────────────────────────────────────────────
+ema20  = ta.ema(close, ema_fast)
+ema50  = ta.ema(close, ema_slow)
+ema200 = ta.ema(close, 200)
+rsi    = ta.rsi(close, rsi_len)
+[macd_line, signal_line, hist] = ta.macd(close, 12, 26, 9)
+
+// Market structure
+higher_high = high > ta.highest(high[1], 5)
+lower_low   = low  < ta.lowest(low[1],  5)
+
+// ── SIGNALS ──────────────────────────────────────────────────
+// BUY conditions
+ema_cross_up   = ta.crossover(ema20, ema50)
+rsi_oversold   = ta.crossover(rsi, rsi_os)
+macd_cross_up  = ta.crossover(macd_line, signal_line)
+above_ema200   = close > ema200
+
+buy_signal  = (ema_cross_up and above_ema200) or
+              (rsi_oversold and above_ema200) or
+              (macd_cross_up and close > ema50)
+
+// SELL conditions
+ema_cross_dn   = ta.crossunder(ema20, ema50)
+rsi_overbought = ta.crossunder(rsi, rsi_ob)
+macd_cross_dn  = ta.crossunder(macd_line, signal_line)
+below_ema200   = close < ema200
+
+sell_signal = (ema_cross_dn) or
+              (rsi_overbought and below_ema200) or
+              (macd_cross_dn and close < ema50)
+
+// ── PLOT ─────────────────────────────────────────────────────
+plot(show_emas ? ema20  : na, "EMA 20",  color=color.new(color.blue,   0), linewidth=1)
+plot(show_emas ? ema50  : na, "EMA 50",  color=color.new(color.orange, 0), linewidth=2)
+plot(show_emas ? ema200 : na, "EMA 200", color=color.new(color.red,    0), linewidth=2)
+
+plotshape(buy_signal,  "Buy Signal",  shape.labelup,   location.belowbar, color.green, text="BUY",  textcolor=color.white, size=size.small)
+plotshape(sell_signal, "Sell Signal", shape.labeldown, location.abovebar,  color.red,   text="SELL", textcolor=color.white, size=size.small)
+
+// ── ALERTS ───────────────────────────────────────────────────
+// These fire the webhook to your Railway bot
+
+indicator_desc = ema_cross_up  ? "EMA 20/50 Cross Up" :
+                 rsi_oversold  ? "RSI Oversold Bounce" :
+                 macd_cross_up ? "MACD Bullish Cross"  :
+                 ema_cross_dn  ? "EMA 20/50 Cross Down":
+                 rsi_overbought? "RSI Overbought Exit" :
+                 macd_cross_dn ? "MACD Bearish Cross"  : "Signal"
+
+alertcondition(buy_signal,  "Buy Signal",  "BUY")
+alertcondition(sell_signal, "Sell Signal", "SELL")
+
+// ============================================================
+// WEBHOOK MESSAGE FORMAT (paste in TradingView alert "Message" box):
+// {
+//   "coin": "{{ticker}}",
+//   "signal": "{{strategy.order.action}}",
+//   "price": {{close}},
+//   "interval": "{{interval}}",
+//   "exchange": "{{exchange}}",
+//   "indicator": "EMA + RSI + MACD"
+// }
+// ============================================================

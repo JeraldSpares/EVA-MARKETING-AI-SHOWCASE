@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: enderun-dashboard
+    runtime: python
+    region: singapore
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python dashboard.py
+    envVars:
+      - key: DASHBOARD_PASSWORD
+        value: Enderun2026
+      - key: DASHBOARD_SECRET
+        value: enderun-hub-secret-2026
+      - key: ANTHROPIC_API_KEY
+        sync: false

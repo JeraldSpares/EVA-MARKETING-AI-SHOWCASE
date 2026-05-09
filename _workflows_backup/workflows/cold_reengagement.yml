@@ -1,0 +1,50 @@
+name: Cold Lead Re-engagement (Monday 6:00 AM PHT)
+
+on:
+  schedule:
+    - cron: '0 22 * * 0'   # Sunday 22:00 UTC = Monday 6:00 AM PHT
+  workflow_dispatch:
+
+jobs:
+  cold-reengagement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Cold Lead Re-engagement
+        env:
+          ANTHROPIC_API_KEY:  ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS:      ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASS:     ${{ secrets.GMAIL_APP_PASS }}
+          GITHUB_PAT:         ${{ secrets.GITHUB_PAT }}
+          GITHUB_REPO:        ${{ secrets.GITHUB_REPO }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python cold_lead_reengagement.py
+
+      - name: Notify Telegram — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN","")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID","")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Cold Re-engagement failed. Check GitHub Actions."},
+                  timeout=10,
+              )
+          EOF

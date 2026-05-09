@@ -1,0 +1,177 @@
+name: Daily FB Post + Drip Email (8:00 AM PHT)
+
+on:
+  schedule:
+    - cron: '0 0 * * *'    # 12:00 AM UTC = 8:00 AM PHT
+  workflow_dispatch:         # Manual trigger anytime
+    inputs:
+      dry_run:
+        description: 'Dry-run mode (preview only — no posting, no email send, sequence unchanged)'
+        required: false
+        default: false
+        type: boolean
+
+concurrency:
+  group: daily-post
+  cancel-in-progress: false
+
+jobs:
+  check-duplicate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - name: Skip scheduled run if already ran today
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manual runs always proceed
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Manual trigger — proceeding."
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Check if any successful run already happened today (UTC)
+          TODAY=$(date -u '+%Y-%m-%d')
+          COUNT=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "daily_post.yml" \
+            --status success \
+            --json createdAt \
+            --jq "[.[] | select(.createdAt | startswith(\"$TODAY\"))] | length")
+          if [ "$COUNT" -gt "0" ]; then
+            echo "Already ran $COUNT time(s) today — skipping scheduled duplicate."
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "No successful run today yet — proceeding."
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+          fi
+
+  facebook-post:
+    needs: check-duplicate
+    if: needs.check-duplicate.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:   ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      AUTO_POST: "true"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post to Facebook
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python post_to_facebook.py --dry-run
+          else
+            python post_to_facebook.py
+          fi
+
+  instagram-post:
+    needs: check-duplicate
+    if: needs.check-duplicate.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_DRIVE_CREDENTIALS:    ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:      ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      INSTAGRAM_ZAPIER_WEBHOOK:    ${{ secrets.INSTAGRAM_ZAPIER_WEBHOOK }}
+      IMGBB_API_KEY:               ${{ secrets.IMGBB_API_KEY }}
+      AUTO_POST: "true"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post to Instagram
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python post_to_instagram.py --dry-run
+          else
+            python post_to_instagram.py
+          fi
+
+  drip-email:
+    needs: check-duplicate
+    if: needs.check-duplicate.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      GMAIL_ADDRESS:            ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASS:           ${{ secrets.GMAIL_APP_PASS }}
+      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:   ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      AUTO_SEND: "true"
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send Drip Emails
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            python send_drip_email.py --dry-run
+          else
+            python send_drip_email.py
+          fi
+
+      - name: Save updated leads.csv back to repo
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: |
+          git config user.name  "Enderun Marketing Bot"
+          git config user.email "eva@enderuncolleges.com"
+          git add leads.csv
+          git diff --staged --quiet || git commit -m "Update leads.csv email counts [skip ci]"
+          git push
+
+  notify:
+    needs: [check-duplicate, facebook-post, instagram-post, drip-email]
+    if: always() && needs.check-duplicate.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Notify Telegram — success
+        if: needs.facebook-post.result == 'success' && needs.instagram-post.result == 'success' && needs.drip-email.result == 'success'
+        run: |
+          python3 - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "✅ Daily automations done!\n📘 Facebook — posted\n📸 Instagram — posted\n📧 Drip emails — sent"},
+                  timeout=10
+              )
+          EOF
+

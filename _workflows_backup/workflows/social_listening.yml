@@ -1,0 +1,115 @@
+name: Social Listening (7:50 AM PHT)
+
+on:
+  schedule:
+    - cron: '50 23 * * *'   # 11:50 PM UTC = 7:50 AM PHT next day
+  workflow_dispatch:          # Manual trigger anytime
+
+concurrency:
+  group: social-listening
+  cancel-in-progress: false
+
+jobs:
+  check-duplicate:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+    outputs:
+      should_skip: ${{ steps.check.outputs.should_skip }}
+    steps:
+      - name: Skip scheduled run if already ran today
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Manual runs always proceed
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "Manual trigger — proceeding."
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+          # Check if any successful run already happened today (UTC)
+          TODAY=$(date -u '+%Y-%m-%d')
+          COUNT=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow "social_listening.yml" \
+            --status success \
+            --json createdAt \
+            --jq "[.[] | select(.createdAt | startswith(\"$TODAY\"))] | length")
+          if [ "$COUNT" -gt "0" ]; then
+            echo "Already ran $COUNT time(s) today — skipping scheduled duplicate."
+            echo "should_skip=true" >> $GITHUB_OUTPUT
+          else
+            echo "No successful run today yet — proceeding."
+            echo "should_skip=false" >> $GITHUB_OUTPUT
+          fi
+
+  social-listening:
+    needs: check-duplicate
+    if: needs.check-duplicate.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Social Listening
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_ADDRESS:     ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASS:    ${{ secrets.GMAIL_APP_PASS }}
+        run: python social_listening.py
+
+      - name: Commit intelligence report back to repo
+        if: success()
+        run: |
+          git config user.name  "Enderun Marketing Bot"
+          git config user.email "eva@enderuncolleges.com"
+          git add -f output/reports/social_listening/
+          git diff --staged --quiet || git commit -m "Add intelligence briefing $(date +%Y-%m-%d) [skip ci]"
+          git push
+
+      - name: Notify Telegram — success (manual runs only)
+        if: success() && github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "🔍 Social Listening done — competitor intelligence report sent to your email."},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram — failure
+        if: failure() && github.event_name == 'workflow_dispatch'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Social Listening failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF

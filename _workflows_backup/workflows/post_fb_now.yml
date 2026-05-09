@@ -1,0 +1,76 @@
+name: Post to Facebook Now (Dashboard-triggered)
+
+on:
+  workflow_dispatch:
+    inputs:
+      caption:
+        description: 'Caption override (leave blank to auto-generate)'
+        required: false
+        default: ''
+      image_filename:
+        description: 'Image filename override (leave blank to use scheduled)'
+        required: false
+        default: ''
+
+jobs:
+  post-facebook:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY:        ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_DRIVE_CREDENTIALS: ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:   ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      FB_ZAPIER_WEBHOOK:        ${{ secrets.FB_ZAPIER_WEBHOOK }}
+      AUTO_POST: "true"
+      OVERRIDE_CAPTION:         ${{ github.event.inputs.caption }}
+      OVERRIDE_IMAGE:           ${{ github.event.inputs.image_filename }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Post to Facebook
+        run: python post_to_facebook.py
+
+      - name: Notify Telegram — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "📘 Facebook post live! (Dashboard-triggered)"},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python3 - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "❌ Facebook post FAILED (Dashboard-triggered). Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF

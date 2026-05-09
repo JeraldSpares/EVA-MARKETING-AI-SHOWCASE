@@ -1,0 +1,28 @@
+# Secrets
+.env
+*.env.local
+.env.*.local
+google_credentials.json
+
+# Runtime state
+bot_state.json
+preview_state.json
+chat_memory.json
+chat_sessions/
+notifications.json
+used_images_log.json
+competitor_hashes.json
+
+# Generated output
+output/
+_dashboard.html
+*.log
+__pycache__/
+*.pyc
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+.claude/

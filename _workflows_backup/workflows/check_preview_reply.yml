@@ -1,0 +1,66 @@
+name: Check Preview Reply (Every 2hrs Sun 7PM–Mon 7AM PHT)
+# Polls Gmail for replies to the weekly campaign preview email.
+# Runs every 2 hours from Sunday 7PM PHT until Monday 7AM PHT.
+# Approved → confirms. Changes → regenerates PDF. No reply by 7AM → runs automations anyway.
+
+on:
+  schedule:
+    - cron: '0 11 * * 0'   # Sun 7PM PHT  (11:00 UTC)
+    - cron: '0 13 * * 0'   # Sun 9PM PHT  (13:00 UTC)
+    - cron: '0 15 * * 0'   # Sun 11PM PHT (15:00 UTC)
+    - cron: '0 17 * * 0'   # Mon 1AM PHT  (17:00 UTC)
+    - cron: '0 19 * * 0'   # Mon 3AM PHT  (19:00 UTC)
+    - cron: '0 21 * * 0'   # Mon 5AM PHT  (21:00 UTC)
+    - cron: '0 23 * * 0'   # Mon 7AM PHT  (23:00 UTC) ← FINAL check before 8AM automations
+  workflow_dispatch:
+
+jobs:
+  check-reply:
+    runs-on: ubuntu-latest
+    env:
+      GMAIL_ADDRESS:     ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASS:    ${{ secrets.GMAIL_APP_PASS }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Check for preview reply
+        run: python check_preview_reply.py
+
+      - name: Commit updated preview state
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add preview_state.json || true
+          git diff --staged --quiet || git commit -m "Update preview state after reply check [skip ci]"
+          git push || true
+
+      - name: Notify Telegram — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": "✅ Preview reply check done — state updated."},
+                  timeout=10
+              )
+          EOF

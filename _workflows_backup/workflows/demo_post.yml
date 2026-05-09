@@ -1,0 +1,123 @@
+name: Demo Post (Telegram-triggered)
+# Safe demo posting — does NOT affect daily schedule, used_images_log, or leads.csv.
+# Triggered remotely by the Telegram bot via GitHub API workflow_dispatch.
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Platform to post to'
+        required: true
+        default: 'facebook'
+        type: choice
+        options:
+          - facebook
+          - instagram
+          - email
+          - all
+      email_to:
+        description: 'Email recipient address (for email/all — leave blank to send to GMAIL_ADDRESS)'
+        required: false
+        default: ''
+      email_name:
+        description: 'Recipient first name (for email personalization)'
+        required: false
+        default: 'Demo Guest'
+      email_program:
+        description: 'Program interest (for email personalization)'
+        required: false
+        default: 'BS Hospitality Management'
+      caption:
+        description: 'Caption approved in Telegram (leave blank to auto-generate)'
+        required: false
+        default: ''
+      image_filename:
+        description: 'Specific image filename to use from Google Drive (leave blank to auto-pick)'
+        required: false
+        default: ''
+
+jobs:
+  demo-post:
+    runs-on: ubuntu-latest
+    env:
+      ANTHROPIC_API_KEY:           ${{ secrets.ANTHROPIC_API_KEY }}
+      GOOGLE_DRIVE_CREDENTIALS:    ${{ secrets.GOOGLE_DRIVE_CREDENTIALS }}
+      GOOGLE_DRIVE_FOLDER_ID:      ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+      INSTAGRAM_ZAPIER_WEBHOOK:    ${{ secrets.INSTAGRAM_ZAPIER_WEBHOOK }}
+      IMGBB_API_KEY:               ${{ secrets.IMGBB_API_KEY }}
+      GMAIL_ADDRESS:               ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASS:              ${{ secrets.GMAIL_APP_PASS }}
+      CAPTION_OVERRIDE:            ${{ github.event.inputs.caption }}
+      IMAGE_OVERRIDE:              ${{ github.event.inputs.image_filename }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4.2.2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.3.0
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run demo post
+        env:
+          PLATFORM:      ${{ github.event.inputs.platform }}
+          EMAIL_TO:      ${{ github.event.inputs.email_to }}
+          EMAIL_NAME:    ${{ github.event.inputs.email_name }}
+          EMAIL_PROGRAM: ${{ github.event.inputs.email_program }}
+        run: |
+          CMD="python test_send.py $PLATFORM"
+          if [ -n "$EMAIL_TO" ]; then
+            CMD="$CMD --to \"$EMAIL_TO\" --name \"$EMAIL_NAME\" --program \"$EMAIL_PROGRAM\""
+          fi
+          echo "Running: $CMD"
+          eval "$CMD"
+
+      - name: Notify Telegram — success
+        if: success()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PLATFORM:           ${{ github.event.inputs.platform }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token    = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id  = os.environ.get("TELEGRAM_CHAT_ID", "")
+          platform = os.environ.get("PLATFORM", "").title()
+          caption  = os.environ.get("CAPTION_OVERRIDE", "").strip()
+          if token and chat_id:
+              icons = {"Facebook": "📘", "Instagram": "📸", "Email": "📧", "All": "🚀"}
+              label = {"Facebook": "Facebook", "Instagram": "Instagram",
+                       "Email": "Email", "All": "Facebook + Instagram + Email"}.get(platform, platform)
+              icon = icons.get(platform, "✅")
+              preview = f"\n\n📝 Caption posted:\n{caption[:300]}{'...' if len(caption) > 300 else ''}" if caption else ""
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": f"{icon} {label} post live!{preview}"},
+                  timeout=10
+              )
+          EOF
+
+      - name: Notify Telegram — failure
+        if: failure()
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          PLATFORM:           ${{ github.event.inputs.platform }}
+        run: |
+          python - <<'EOF'
+          import os, requests
+          token   = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "")
+          platform = os.environ.get("PLATFORM", "").title()
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  json={"chat_id": chat_id, "text": f"❌ {platform} post failed. Check GitHub Actions for details."},
+                  timeout=10
+              )
+          EOF
